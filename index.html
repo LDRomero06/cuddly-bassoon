@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemma 3 RAG Chat</title>
+    
+    <link rel="stylesheet" href="https://pyscript.net/releases/2024.1.1/core.css">
+    <script type="module" src="https://pyscript.net/releases/2024.1.1/core.js"></script>
+
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <py-config>
+        packages = ["numpy"]
+        [[fetch]]
+        files = ["main.py", "processor.py"]
+    </py-config>
+
+    <script type="module">
+        // USE THE FULL URL HERE - This fixes the "Bare Specifier" error
+        import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.6.0';
+        
+        env.allowLocalModels = false;
+        env.useBrowserCache = true;
+
+        // Attach to window so Python can find it
+        window.models = { generator: null, embedder: null };
+
+        window.initModels = async function() {
+            const status = document.getElementById("model-status");
+            try {
+                status.innerText = "Loading Gemma 3 Engine...";
+                
+                // Using the ONNX community repo is the most reliable path for browser RAG
+                window.models.generator = await pipeline('text-generation', 'onnx-community/gemma-3-270m-it-ONNX', {
+                    device: 'webgpu', 
+                    dtype: 'q4'
+                });
+
+                // Also load the embedder for the RAG logic
+                status.innerText = "Loading Embedder...";
+                window.models.embedder = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+
+                status.innerText = "Gemma 3 Online";
+                return true;
+            } catch (e) {
+                console.error("Load Error:", e);
+                status.innerText = "Error: " + e.message;
+                return false;
+            }
+        };
+    </script>
+
+    <style>
+        :root {
+            --bg-body: #f8f9fa;
+            --bg-sidebar: #ffffff;
+            --bg-chat: #ffffff;
+            --text-main: #1a1a1a;
+            --text-muted: #666;
+            --border: #e5e7eb;
+            --primary: #2563eb;
+            --bubble-user: #2563eb;
+            --bubble-ai: #f3f4f6;
+            --text-user: white;
+            --text-ai: #1f2937;
+        }
+
+        [data-theme="dark"] {
+            --bg-body: #0f172a;
+            --bg-sidebar: #1e293b;
+            --bg-chat: #1e293b;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --border: #334155;
+            --primary: #3b82f6;
+            --bubble-user: #3b82f6;
+            --bubble-ai: #334155;
+            --text-user: white;
+            --text-ai: #e2e8f0;
+        }
+
+        body { font-family: 'Inter', sans-serif; margin: 0; display: flex; height: 100vh; background: var(--bg-body); color: var(--text-main); transition: 0.3s; }
+        
+        /* Sidebar */
+        .sidebar { width: 300px; background: var(--bg-sidebar); border-right: 1px solid var(--border); padding: 20px; display: flex; flex-direction: column; gap: 15px; }
+        .sidebar h2 { font-size: 1.2rem; margin-top: 0; }
+        textarea { width: 100%; height: 150px; background: var(--bg-body); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px; padding: 10px; resize: none; font-family: inherit; }
+        .btn { background: var(--primary); color: white; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: 600; width: 100%; transition: opacity 0.2s; }
+        .btn:hover { opacity: 0.9; }
+        .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text-main); }
+        .status-badge { font-size: 0.8rem; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
+        .dot { width: 8px; height: 8px; background: #22c55e; border-radius: 50%; }
+
+        /* Main Chat Area */
+        .main-chat { flex: 1; display: flex; flex-direction: column; padding: 20px; max-width: 900px; margin: 0 auto; width: 100%; }
+        .chat-history { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; padding-bottom: 20px; }
+        
+        .message { max-width: 80%; padding: 12px 16px; border-radius: 12px; line-height: 1.5; font-size: 0.95rem; animation: fadein 0.3s; }
+        .message.user { align-self: flex-end; background: var(--bubble-user); color: var(--text-user); border-bottom-right-radius: 2px; }
+        .message.ai { align-self: flex-start; background: var(--bubble-ai); color: var(--text-ai); border-bottom-left-radius: 2px; }
+        .message .meta { font-size: 0.75rem; opacity: 0.7; margin-bottom: 4px; display: block; }
+
+        .input-area { display: flex; gap: 10px; padding-top: 20px; border-top: 1px solid var(--border); }
+        .input-area input { flex: 1; padding: 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-sidebar); color: var(--text-main); outline: none; }
+        
+        @keyframes fadein { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body>
+
+    <aside class="sidebar">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h2>📚 Knowledge</h2>
+            <button id="theme-btn" class="btn-outline" style="width: auto; padding: 5px 10px;">
+                <i class="fas fa-moon"></i>
+            </button>
+        </div>
+        
+        <div class="status-badge">
+            <div class="dot"></div> <span id="model-status">Initializing AI...</span>
+        </div>
+
+        <label style="font-size: 0.9rem; font-weight: 600;">Add Documents</label>
+        <textarea id="doc-input" placeholder="Paste text, articles, or data here to 'teach' Gemma..."></textarea>
+        <button id="index-btn" class="btn" py-click="on_index_click">
+            <i class="fas fa-database"></i> Index to Memory
+        </button>
+        <div id="index-status" style="font-size: 0.8rem; color: var(--text-muted);">Memory empty.</div>
+    </aside>
+
+    <main class="main-chat">
+        <div id="chat-history" class="chat-history">
+            <div class="message ai">
+                <span class="meta">Gemma 3 (270M)</span>
+                Hello! I am running locally in your browser. Upload some text in the sidebar, and I can answer questions about it using RAG.
+            </div>
+        </div>
+
+        <div class="input-area">
+            <input type="text" id="user-input" placeholder="Ask a question about your documents...">
+            <button class="btn" style="width: auto;" py-click="on_send_click">Send</button>
+        </div>
+    </main>
+
+    <script>
+        // Simple Theme Toggle
+        document.getElementById('theme-btn').addEventListener('click', () => {
+            const html = document.documentElement;
+            const current = html.getAttribute('data-theme');
+            html.setAttribute('data-theme', current === 'dark' ? 'light' : 'dark');
+        });
+    </script>
+
+    <script type="py" src="main.py"></script>
+
+</body>
+</html>
